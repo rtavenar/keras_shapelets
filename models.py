@@ -56,7 +56,8 @@ class LocalSquaredDistanceLayer(Layer):
 
 
 class ShapeletModel:
-    def __init__(self, n_shapelets, shapelet_size, epochs=1000, optimizer="sgd", weight_regularizer=0.):
+    def __init__(self, n_shapelets, shapelet_size, epochs=1000, batch_size=256, verbose_level=2, optimizer="sgd",
+                 weight_regularizer=0.):
         self.n_shapelets = n_shapelets
         self.shapelet_size = shapelet_size
         self.n_classes = None
@@ -64,8 +65,8 @@ class ShapeletModel:
         self.epochs = epochs
         self.weight_regularizer = weight_regularizer
         self.model = Sequential()
-        self.batch_size = 500
-        self.verbose_level = 2
+        self.batch_size = batch_size
+        self.verbose_level = verbose_level
         self.layers = []
 
     def fit(self, X, y):
@@ -125,7 +126,11 @@ if __name__ == "__main__":
     X_train, y_train, X_test, y_test = CachedDatasets().load_dataset("Trace")
     X_train = TimeSeriesScalerMeanVariance().fit_transform(X_train)
     X_test = TimeSeriesScalerMeanVariance().fit_transform(X_test)
-    clf = ShapeletModel(n_shapelets=50, shapelet_size=32, optimizer=RMSprop(lr=.001), weight_regularizer=.01)
+    clf = ShapeletModel(n_shapelets=50,
+                        shapelet_size=32,
+                        epochs=10,
+                        optimizer=RMSprop(lr=.001),
+                        weight_regularizer=.01)
     clf.fit(X_train, y_train)
     pred = clf.predict(X_train)
     print(numpy.sum(y_train == pred.argmin(axis=1)))
