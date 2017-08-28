@@ -17,7 +17,7 @@ class GlobalMinPooling1D(Layer):
         3D tensor with shape: `(batch_size, steps, features)`.
     # Output shape
         2D tensor with shape:
-        `(batch_size, channels)`
+        `(batch_size, features)`
     """
 
     def __init__(self, **kwargs):
@@ -32,20 +32,27 @@ class GlobalMinPooling1D(Layer):
 
 
 class LocalSquaredDistanceLayer(Layer):
+    """Pairwise (squared) distance computation between local patches and shapelets
+    # Input shape
+        3D tensor with shape: `(batch_size, steps, features)`.
+    # Output shape
+        3D tensor with shape:
+        `(batch_size, steps, n_shapelets)`
+    """
     def __init__(self, n_shapelets, **kwargs):
         self.n_shapelets = n_shapelets
         super(LocalSquaredDistanceLayer, self).__init__(**kwargs)
         self.input_spec = InputSpec(ndim=3)
 
     def build(self, input_shape):
-        # Create a trainable weight variable for this layer.
         self.kernel = self.add_weight(name='kernel',
                                       shape=(self.n_shapelets, input_shape[2]),
                                       initializer='uniform',
                                       trainable=True)
-        super(LocalSquaredDistanceLayer, self).build(input_shape)  # Be sure to call this somewhere!
+        super(LocalSquaredDistanceLayer, self).build(input_shape)
 
     def call(self, x, **kwargs):
+        # (x - y)^2 = x^2 + y^2 - 2 * x * y
         x_sq = K.expand_dims(K.sum(x ** 2, axis=2), axis=-1)
         y_sq = K.reshape(K.sum(self.kernel ** 2, axis=1), (1, 1, self.n_shapelets))
         xy = K.dot(x, K.transpose(self.kernel))
@@ -69,6 +76,10 @@ class ShapeletModel:
         self.verbose_level = verbose_level
         self.layers = []
         self.categorical_y = False
+
+    @property
+    def shapelets(self):
+        return self.model.get_layer("shapelets").get_weights()[0]
 
     def fit(self, X, y):
         n_ts, sz, d = X.shape
@@ -109,7 +120,7 @@ class ShapeletModel:
                    trainable=False,
                    use_bias=False,
                    name="false_conv"),
-            LocalSquaredDistanceLayer(self.n_shapelets, name="dists"),
+            LocalSquaredDistanceLayer(self.n_shapelets, name="shapelets"),
             GlobalMinPooling1D(name="min_pooling")
         ]
         if self.weight_regularizer > 0.:
@@ -142,4 +153,5 @@ if __name__ == "__main__":
                         weight_regularizer=.01)
     clf.fit(X_train, y_train)
     pred = clf.predict(X_train)
+    print(clf.shapelets.shape)
     print(numpy.sum(y_train == pred))
