@@ -163,6 +163,7 @@ class ShapeletModel:
 if __name__ == "__main__":
     from tslearn.datasets import CachedDatasets
     from tslearn.preprocessing import TimeSeriesScalerMeanVariance
+    import time
 
     X_train, y_train, X_test, y_test = CachedDatasets().load_dataset("Trace")
     X_train = TimeSeriesScalerMeanVariance().fit_transform(X_train)
@@ -173,11 +174,14 @@ if __name__ == "__main__":
     n_classes = len(set(y_train))
 
     n_shapelets_per_size = grabocka_params_to_shapelet_size_dict(ts_sz, n_classes, l, r)
+    t0 = time.time()
     clf = ShapeletModel(n_shapelets_per_size=n_shapelets_per_size,
                         epochs=1000,
                         optimizer=RMSprop(lr=.001),
-                        weight_regularizer=.01)
+                        weight_regularizer=.01,
+                        verbose_level=0)
     clf.fit(X_train, y_train)
-    pred = clf.predict(X_train)
+    print("Total time for training: %fs" % (time.time() - t0))
     print([shp.shape for shp in clf.shapelets])
-    print(numpy.sum(y_train == pred))
+    pred = clf.predict(X_test)
+    print(numpy.sum(y_test == pred))
