@@ -68,11 +68,16 @@ class ShapeletModel:
         self.batch_size = batch_size
         self.verbose_level = verbose_level
         self.layers = []
+        self.categorical_y = False
 
     def fit(self, X, y):
         n_ts, sz, d = X.shape
         assert(d == 1)
-        y_ = to_categorical(y)
+        if y.ndim == 1:
+            y_ = to_categorical(y)
+        else:
+            y_ = y
+            self.categorical_y = True
         n_classes = y_.shape[1]
         self._set_model_layers(ts_sz=sz, d=d, n_classes=n_classes)
         self.model.compile(loss="categorical_crossentropy",
@@ -83,7 +88,11 @@ class ShapeletModel:
         return self
 
     def predict(self, X):
-        return self.model.predict(X, batch_size=self.batch_size, verbose=self.verbose_level)
+        categorical_preds = self.model.predict(X, batch_size=self.batch_size, verbose=self.verbose_level)
+        if self.categorical_y:
+            return categorical_preds
+        else:
+            return categorical_preds.argmax(axis=1)
 
     def _set_weights_false_conv(self):
         d = self.layers[0].get_weights()[0].shape[1]
@@ -128,9 +137,9 @@ if __name__ == "__main__":
     X_test = TimeSeriesScalerMeanVariance().fit_transform(X_test)
     clf = ShapeletModel(n_shapelets=50,
                         shapelet_size=32,
-                        epochs=10,
+                        epochs=1000,
                         optimizer=RMSprop(lr=.001),
                         weight_regularizer=.01)
     clf.fit(X_train, y_train)
     pred = clf.predict(X_train)
-    print(numpy.sum(y_train == pred.argmin(axis=1)))
+    print(numpy.sum(y_train == pred))
