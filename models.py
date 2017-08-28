@@ -63,6 +63,33 @@ class LocalSquaredDistanceLayer(Layer):
 
 
 def grabocka_params_to_shapelet_size_dict(ts_sz, n_classes, l, r):
+    """Compute number and length of shapelets the way it is done in [1]_.
+
+    Parameters
+    ----------
+    ts_sz: int
+        Length of time series in the dataset
+    n_classes: int
+        Number of classes in the dataset
+    l: float
+        Fraction of the length of time series to be used for base shapelet length
+    r: int
+        Number of different shapelet lengths to use
+
+    Returns
+    -------
+    dict
+        Dictionnary giving, for each shapelet length, the number of such shapelets to be generated
+
+    Examples
+    --------
+    >>> d = grabocka_params_to_shapelet_size_dict(ts_sz=100, n_classes=3, l=0.1, r=2)
+    >>> keys = sorted(d.keys())
+    >>> print(keys)
+    [10, 20]
+    >>> print([d[k] for k in keys])
+    [3, 3]
+    """
     base_size = int(l * ts_sz)
     d = {}
     for sz_idx in range(r):
@@ -73,8 +100,64 @@ def grabocka_params_to_shapelet_size_dict(ts_sz, n_classes, l, r):
 
 
 class ShapeletModel:
+    """Learning Time-Series Shapelets model as presented in [1]_.
+
+    This implementation only accepts mono-dimensional time series as inputs.
+
+    Parameters
+    ----------
+    n_shapelets_per_size: dict
+        Dictionary giving, for each shapelet size (key),
+        the number of such shapelets to be trained (value)
+    max_iter: int (default: 1000)
+        Number of training epochs.
+    batch_size: int (default:256)
+        Batch size to be used.
+    verbose_level: {0, 1, 2} (default: 2)
+        `keras` verbose level.
+    optimizer: str or keras.optimizers.Optimizer (default: "sgd")
+        `keras` optimizer to use for training.
+    weight_regularizer: float or None (default: None)
+        `keras` regularizer to use for training the classification (softmax) layer.
+        If None, no regularization is performed.
+
+    Attributes
+    ----------
+    shapelets: numpy.ndarray
+        Set of time-series shapelets
+
+    Examples
+    --------
+    >>> from tslearn.generators import random_walk_blobs
+    >>> X, y = random_walk_blobs(n_ts_per_blob=100, sz=256, d=1, n_blobs=3)
+    >>> clf = ShapeletModel(n_shapelets_per_size={10: 5}, max_iter=1, verbose_level=0)
+    >>> clf.fit(X, y).shapelets.shape
+    (5,)
+    >>> clf.shapelets[0].shape
+    (10,)
+    >>> clf.predict(X).shape
+    (300,)
+    >>> clf.transform(X).shape
+    (300, 5)
+    >>> clf2 = ShapeletModel(n_shapelets_per_size={10: 5, 20: 10}, max_iter=1, verbose_level=0)
+    >>> clf2.fit(X, y).shapelets.shape
+    (15,)
+    >>> clf2.shapelets[0].shape
+    (10,)
+    >>> clf2.shapelets[5].shape
+    (20,)
+    >>> clf2.predict(X).shape
+    (300,)
+    >>> clf2.transform(X).shape
+    (300, 15)
+
+
+    References
+    ----------
+    .. [1] J. Grabocka et al. Learning Time-Series Shapelets. SIGKDD 2014.
+    """
     def __init__(self, n_shapelets_per_size,
-                 epochs=1000,
+                 max_iter=1000,
                  batch_size=256,
                  verbose_level=2,
                  optimizer="sgd",
@@ -82,23 +165,29 @@ class ShapeletModel:
         self.n_shapelets_per_size = n_shapelets_per_size
         self.n_classes = None
         self.optimizer = optimizer
-        self.epochs = epochs
+        self.epochs = max_iter
         self.weight_regularizer = weight_regularizer
         self.model = None
-        self.model_transformer = None
+        self.transformer_model = None
         self.batch_size = batch_size
         self.verbose_level = verbose_level
-        self.layers = []
         self.categorical_y = False
 
     @property
-    def n_shapelet_sizes(self):
+    def _n_shapelet_sizes(self):
         return len(self.n_shapelets_per_size)
 
     @property
     def shapelets(self):
-        return [self.model.get_layer("shapelets_%d" % i).get_weights()[0]
-                for i in range(self.n_shapelet_sizes)]
+        total_n_shp = sum(self.n_shapelets_per_size.values())
+        shapelets = numpy.empty((total_n_shp, ), dtype=object)
+        idx = 0
+        for i in range(self._n_shapelet_sizes):
+            for shp in self.model.get_layer("shapelets_%d" % i).get_weights()[0]:
+                shapelets[idx] = shp
+                idx += 1
+        assert idx == total_n_shp
+        return shapelets
 
     def fit(self, X, y):
         n_ts, sz, d = X.shape
@@ -114,7 +203,7 @@ class ShapeletModel:
                            optimizer=self.optimizer,
                            metrics=[categorical_accuracy,
                                     categorical_crossentropy])
-        self.model_transformer.compile(loss="mean_squared_error",
+        self.transformer_model.compile(loss="mean_squared_error",
                                        optimizer=self.optimizer)
         self._set_weights_false_conv(d=d)
         self.model.fit(X, y_,
@@ -133,7 +222,7 @@ class ShapeletModel:
             return categorical_preds.argmax(axis=1)
 
     def transform(self, X):
-        return self.model_transformer.predict(X,
+        return self.transformer_model.predict(X,
                                               batch_size=self.batch_size,
                                               verbose=self.verbose_level)
 
@@ -173,9 +262,34 @@ class ShapeletModel:
                             activation="softmax",
                             name="softmax")(concatenated_features)
         self.model = Model(inputs=inputs, outputs=outputs)
-        self.model_transformer = Model(inputs=inputs, outputs=concatenated_features)
+        self.transformer_model = Model(inputs=inputs, outputs=concatenated_features)
 
     def get_weights(self, layer_name=None):
+        """Return model weights (or weights for a given layer if `layer_name` is provided).
+
+        Parameters
+        ----------
+        layer_name: str or None (default: None)
+            Name of the layer for which  weights should be returned.
+            If None, all model weights are returned.
+            Available layer names with weights are:
+            - "shapelets_i" with i an integer for the sets of shapelets
+              corresponding to each shapelet size (sorted in ascending order)
+            - "softmax" for the final classification layer
+
+        Returns
+        -------
+        list
+            list of model (or layer) weights
+
+        Examples
+        --------
+        >>> from tslearn.generators import random_walk_blobs
+        >>> X, y = random_walk_blobs(n_ts_per_blob=100, sz=256, d=1, n_blobs=3)
+        >>> clf = ShapeletModel(n_shapelets_per_size={10: 5}, max_iter=1, verbose_level=0)
+        >>> clf.fit(X, y).get_weights("softmax")[0].shape
+        (5, 3)
+        """
         if layer_name is None:
             return self.model.get_weights()
         else:
@@ -199,7 +313,7 @@ if __name__ == "__main__":
     n_shapelets_per_size = grabocka_params_to_shapelet_size_dict(ts_sz, n_classes, l, r)
     t0 = time.time()
     clf = ShapeletModel(n_shapelets_per_size=n_shapelets_per_size,
-                        epochs=1000,
+                        max_iter=1000,
                         optimizer=RMSprop(lr=.001),
                         weight_regularizer=.01,
                         verbose_level=0)
