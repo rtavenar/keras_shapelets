@@ -1,5 +1,5 @@
-from keras.models import Sequential
-from keras.layers import Dense, Conv1D, Layer
+from keras.models import Model
+from keras.layers import Dense, Conv1D, Layer, Input, Concatenate
 from keras.metrics import categorical_accuracy, categorical_crossentropy
 from keras.utils import to_categorical
 from keras.optimizers import RMSprop
@@ -63,23 +63,26 @@ class LocalSquaredDistanceLayer(Layer):
 
 
 class ShapeletModel:
-    def __init__(self, n_shapelets, shapelet_size, epochs=1000, batch_size=256, verbose_level=2, optimizer="sgd",
+    def __init__(self, n_shapelets_per_size, epochs=1000, batch_size=256, verbose_level=2, optimizer="sgd",
                  weight_regularizer=0.):
-        self.n_shapelets = n_shapelets
-        self.shapelet_size = shapelet_size
+        self.n_shapelets_per_size = n_shapelets_per_size
         self.n_classes = None
         self.optimizer = optimizer
         self.epochs = epochs
         self.weight_regularizer = weight_regularizer
-        self.model = Sequential()
+        self.model = None
         self.batch_size = batch_size
         self.verbose_level = verbose_level
         self.layers = []
         self.categorical_y = False
 
     @property
+    def n_shapelet_sizes(self):
+        return len(self.n_shapelets_per_size)
+
+    @property
     def shapelets(self):
-        return self.model.get_layer("shapelets").get_weights()[0]
+        return [self.model.get_layer("shapelets_%d" % i).get_weights()[0] for i in range(self.n_shapelet_sizes)]
 
     def fit(self, X, y):
         n_ts, sz, d = X.shape
@@ -94,7 +97,7 @@ class ShapeletModel:
         self.model.compile(loss="categorical_crossentropy",
                            optimizer=self.optimizer,
                            metrics=[categorical_accuracy, categorical_crossentropy])
-        self._set_weights_false_conv()
+        self._set_weights_false_conv(d=d)
         self.model.fit(X, y_, batch_size=self.batch_size, epochs=self.epochs, verbose=self.verbose_level)
         return self
 
@@ -105,38 +108,47 @@ class ShapeletModel:
         else:
             return categorical_preds.argmax(axis=1)
 
-    def _set_weights_false_conv(self):
-        d = self.layers[0].get_weights()[0].shape[1]
-        weights_false_conv = numpy.empty((self.shapelet_size, d, self.shapelet_size))
-        for di in range(d):
-            weights_false_conv[:, di, :] = numpy.eye(self.shapelet_size)
-        self.layers[0].set_weights([weights_false_conv])
+    def _set_weights_false_conv(self, d):
+        shapelet_sizes = sorted(self.n_shapelets_per_size.keys())
+        for i, sz in enumerate(sorted(shapelet_sizes)):
+            weights_false_conv = numpy.empty((sz, d, sz))
+            for di in range(d):
+                weights_false_conv[:, di, :] = numpy.eye(sz)
+            self.model.get_layer("false_conv_%d" % i).set_weights([weights_false_conv])
 
     def _set_model_layers(self, ts_sz, d, n_classes):
-        self.layers = [
-            Conv1D(filters=self.shapelet_size,
-                   kernel_size=self.shapelet_size,
-                   input_shape=(ts_sz, d),
-                   trainable=False,
-                   use_bias=False,
-                   name="false_conv"),
-            LocalSquaredDistanceLayer(self.n_shapelets, name="shapelets"),
-            GlobalMinPooling1D(name="min_pooling")
-        ]
-        if self.weight_regularizer > 0.:
-            self.layers.append(Dense(units=n_classes,
-                                     activation="softmax",
-                                     kernel_regularizer=l2(self.weight_regularizer),
-                                     name="softmax"))
+        inputs = Input(shape=(ts_sz, d), name="input")
+        shapelet_sizes = sorted(self.n_shapelets_per_size.keys())
+        pool_layers = []
+        for i, sz in enumerate(sorted(shapelet_sizes)):
+            transformer_layer = Conv1D(filters=sz,
+                                       kernel_size=sz,
+                                       trainable=False,
+                                       use_bias=False,
+                                       name="false_conv_%d" % i)(inputs)
+            shapelet_layer = LocalSquaredDistanceLayer(self.n_shapelets_per_size[sz],
+                                                       name="shapelets_%d" % i)(transformer_layer)
+            pool_layers.append(GlobalMinPooling1D(name="min_pooling_%d" % i)(shapelet_layer))
+        if len(shapelet_sizes) > 1:
+            concatenated_features = Concatenate()(pool_layers)
         else:
-            self.layers.append(Dense(units=n_classes,
-                                     activation="softmax",
-                                     name="softmax"))
-        for l in self.layers:
-            self.model.add(l)
+            concatenated_features = pool_layers[0]
+        if self.weight_regularizer > 0.:
+            outputs = Dense(units=n_classes,
+                            activation="softmax",
+                            kernel_regularizer=l2(self.weight_regularizer),
+                            name="softmax")(concatenated_features)
+        else:
+            outputs = Dense(units=n_classes,
+                            activation="softmax",
+                            name="softmax")(concatenated_features)
+        self.model = Model(inputs=inputs, outputs=outputs)
 
-    def get_weights(self):
-        return self.model.get_weights()
+    def get_weights(self, layer_name=None):
+        if layer_name is None:
+            return self.model.get_weights()
+        else:
+            return self.model.get_layer(layer_name).get_weights()
 
 
 if __name__ == "__main__":
@@ -146,12 +158,11 @@ if __name__ == "__main__":
     X_train, y_train, X_test, y_test = CachedDatasets().load_dataset("Trace")
     X_train = TimeSeriesScalerMeanVariance().fit_transform(X_train)
     X_test = TimeSeriesScalerMeanVariance().fit_transform(X_test)
-    clf = ShapeletModel(n_shapelets=50,
-                        shapelet_size=32,
+    clf = ShapeletModel(n_shapelets_per_size={32: 40, 16: 40},
                         epochs=1000,
                         optimizer=RMSprop(lr=.001),
                         weight_regularizer=.01)
     clf.fit(X_train, y_train)
     pred = clf.predict(X_train)
-    print(clf.shapelets.shape)
+    print([shp.shape for shp in clf.shapelets])
     print(numpy.sum(y_train == pred))
