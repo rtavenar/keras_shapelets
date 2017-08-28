@@ -62,6 +62,15 @@ class LocalSquaredDistanceLayer(Layer):
         return input_shape[0], input_shape[1], self.n_shapelets
 
 
+def grabocka_params_to_shapelet_size_dict(ts_sz, n_classes, l, r):
+    base_size = int(l * ts_sz)
+    d = {}
+    for sz_idx in range(r):
+        shp_sz = base_size * (sz_idx + 1)
+        n_shapelets = int(numpy.log10(ts_sz - shp_sz + 1) * (n_classes - 1))
+        d[shp_sz] = n_shapelets
+    return d
+
 class ShapeletModel:
     def __init__(self, n_shapelets_per_size, epochs=1000, batch_size=256, verbose_level=2, optimizer="sgd",
                  weight_regularizer=0.):
@@ -158,7 +167,13 @@ if __name__ == "__main__":
     X_train, y_train, X_test, y_test = CachedDatasets().load_dataset("Trace")
     X_train = TimeSeriesScalerMeanVariance().fit_transform(X_train)
     X_test = TimeSeriesScalerMeanVariance().fit_transform(X_test)
-    clf = ShapeletModel(n_shapelets_per_size={32: 40, 16: 40},
+
+    ts_sz = X_train.shape[1]
+    l, r = 0.1, 2  # Taken (for dataset Trace) from the Table at: http://fs.ismll.de/publicspace/LearningShapelets/
+    n_classes = len(set(y_train))
+
+    n_shapelets_per_size = grabocka_params_to_shapelet_size_dict(ts_sz, n_classes, l, r)
+    clf = ShapeletModel(n_shapelets_per_size=n_shapelets_per_size,
                         epochs=1000,
                         optimizer=RMSprop(lr=.001),
                         weight_regularizer=.01)
