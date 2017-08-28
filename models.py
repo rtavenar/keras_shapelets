@@ -71,8 +71,13 @@ def grabocka_params_to_shapelet_size_dict(ts_sz, n_classes, l, r):
         d[shp_sz] = n_shapelets
     return d
 
+
 class ShapeletModel:
-    def __init__(self, n_shapelets_per_size, epochs=1000, batch_size=256, verbose_level=2, optimizer="sgd",
+    def __init__(self, n_shapelets_per_size,
+                 epochs=1000,
+                 batch_size=256,
+                 verbose_level=2,
+                 optimizer="sgd",
                  weight_regularizer=0.):
         self.n_shapelets_per_size = n_shapelets_per_size
         self.n_classes = None
@@ -80,6 +85,7 @@ class ShapeletModel:
         self.epochs = epochs
         self.weight_regularizer = weight_regularizer
         self.model = None
+        self.model_transformer = None
         self.batch_size = batch_size
         self.verbose_level = verbose_level
         self.layers = []
@@ -91,7 +97,8 @@ class ShapeletModel:
 
     @property
     def shapelets(self):
-        return [self.model.get_layer("shapelets_%d" % i).get_weights()[0] for i in range(self.n_shapelet_sizes)]
+        return [self.model.get_layer("shapelets_%d" % i).get_weights()[0]
+                for i in range(self.n_shapelet_sizes)]
 
     def fit(self, X, y):
         n_ts, sz, d = X.shape
@@ -105,17 +112,30 @@ class ShapeletModel:
         self._set_model_layers(ts_sz=sz, d=d, n_classes=n_classes)
         self.model.compile(loss="categorical_crossentropy",
                            optimizer=self.optimizer,
-                           metrics=[categorical_accuracy, categorical_crossentropy])
+                           metrics=[categorical_accuracy,
+                                    categorical_crossentropy])
+        self.model_transformer.compile(loss="mean_squared_error",
+                                       optimizer=self.optimizer)
         self._set_weights_false_conv(d=d)
-        self.model.fit(X, y_, batch_size=self.batch_size, epochs=self.epochs, verbose=self.verbose_level)
+        self.model.fit(X, y_,
+                       batch_size=self.batch_size,
+                       epochs=self.epochs,
+                       verbose=self.verbose_level)
         return self
 
     def predict(self, X):
-        categorical_preds = self.model.predict(X, batch_size=self.batch_size, verbose=self.verbose_level)
+        categorical_preds = self.model.predict(X,
+                                               batch_size=self.batch_size,
+                                               verbose=self.verbose_level)
         if self.categorical_y:
             return categorical_preds
         else:
             return categorical_preds.argmax(axis=1)
+
+    def transform(self, X):
+        return self.model_transformer.predict(X,
+                                              batch_size=self.batch_size,
+                                              verbose=self.verbose_level)
 
     def _set_weights_false_conv(self, d):
         shapelet_sizes = sorted(self.n_shapelets_per_size.keys())
@@ -123,7 +143,8 @@ class ShapeletModel:
             weights_false_conv = numpy.empty((sz, d, sz))
             for di in range(d):
                 weights_false_conv[:, di, :] = numpy.eye(sz)
-            self.model.get_layer("false_conv_%d" % i).set_weights([weights_false_conv])
+            layer = self.model.get_layer("false_conv_%d" % i)
+            layer.set_weights([weights_false_conv])
 
     def _set_model_layers(self, ts_sz, d, n_classes):
         inputs = Input(shape=(ts_sz, d), name="input")
@@ -152,6 +173,7 @@ class ShapeletModel:
                             activation="softmax",
                             name="softmax")(concatenated_features)
         self.model = Model(inputs=inputs, outputs=outputs)
+        self.model_transformer = Model(inputs=inputs, outputs=concatenated_features)
 
     def get_weights(self, layer_name=None):
         if layer_name is None:
@@ -170,7 +192,8 @@ if __name__ == "__main__":
     X_test = TimeSeriesScalerMeanVariance().fit_transform(X_test)
 
     ts_sz = X_train.shape[1]
-    l, r = 0.1, 2  # Taken (for dataset Trace) from the Table at: http://fs.ismll.de/publicspace/LearningShapelets/
+    l, r = 0.1, 2  # Taken (for dataset Trace) from the Table at:
+    # http://fs.ismll.de/publicspace/LearningShapelets/
     n_classes = len(set(y_train))
 
     n_shapelets_per_size = grabocka_params_to_shapelet_size_dict(ts_sz, n_classes, l, r)
@@ -185,3 +208,4 @@ if __name__ == "__main__":
     print([shp.shape for shp in clf.shapelets])
     pred = clf.predict(X_test)
     print(numpy.sum(y_test == pred))
+    print(clf.transform(X_train).shape)
