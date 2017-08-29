@@ -131,20 +131,20 @@ class ShapeletModel:
     >>> from tslearn.generators import random_walk_blobs
     >>> X, y = random_walk_blobs(n_ts_per_blob=100, sz=256, d=1, n_blobs=3)
     >>> clf = ShapeletModel(n_shapelets_per_size={10: 5}, max_iter=1, verbose_level=0)
-    >>> clf.fit(X, y).shapelets.shape
+    >>> clf.fit(X, y).shapelets_.shape
     (5,)
-    >>> clf.shapelets[0].shape
+    >>> clf.shapelets_[0].shape
     (10,)
     >>> clf.predict(X).shape
     (300,)
     >>> clf.transform(X).shape
     (300, 5)
     >>> clf2 = ShapeletModel(n_shapelets_per_size={10: 5, 20: 10}, max_iter=1, verbose_level=0)
-    >>> clf2.fit(X, y).shapelets.shape
+    >>> clf2.fit(X, y).shapelets_.shape
     (15,)
-    >>> clf2.shapelets[0].shape
+    >>> clf2.shapelets_[0].shape
     (10,)
-    >>> clf2.shapelets[5].shape
+    >>> clf2.shapelets_[5].shape
     (20,)
     >>> clf2.predict(X).shape
     (300,)
@@ -178,7 +178,7 @@ class ShapeletModel:
         return len(self.n_shapelets_per_size)
 
     @property
-    def shapelets(self):
+    def shapelets_(self):
         total_n_shp = sum(self.n_shapelets_per_size.values())
         shapelets = numpy.empty((total_n_shp, ), dtype=object)
         idx = 0
@@ -319,7 +319,7 @@ if __name__ == "__main__":
                         verbose_level=0)
     clf.fit(X_train, y_train)
     print("Total time for training: %fs" % (time.time() - t0))
-    print([shp.shape for shp in clf.shapelets])
+    print([shp.shape for shp in clf.shapelets_])
     pred = clf.predict(X_test)
     print(numpy.sum(y_test == pred))
     print(clf.transform(X_train).shape)

@@ -11,3 +11,6 @@ installed) for efficient optimization of the Shapelet coefficients.
 
 As an example, it takes roughly 1 minute (on a standard MacBook Pro laptop) for training on the Trace dataset from 
 UCR/UEA repository.
+
+This code is now integrated into the `tslearn` toolkit.
+Have a look [there](https://github.com/rtavenar/tslearn) if you are interested.
